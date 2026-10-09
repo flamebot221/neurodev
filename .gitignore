@@ -1,0 +1,5 @@
+neurodev.db
+neurodev-sqlite-migration.json
+neurodev-data.json
+neurodev-recovery.json
+__pycache__/
