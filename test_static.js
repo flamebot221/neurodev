@@ -58,6 +58,21 @@ test('saved data reloads from the current browser storage format', () => {
   assert.equal(D.loadState(storage).projects[0].name, 'Baseline project');
 });
 
+test('saved events, notes, and theme survive reload normalization', () => {
+  const saved = { schema: 2, projects: [], tasks: [], backlog: [], learning: [], subjects: [], archive: {}, theme: 'dark', events: [{ id: 'e1', title: 'Paper discussion', date: '2026-10-12', category: 'Research' }], notes: [{ id: 'n1', title: 'Result', body: 'Baseline overfits.' }] };
+  const storage = { getItem: key => key === D.STORAGE_KEY ? JSON.stringify(saved) : null, setItem() {} };
+  const state = D.loadState(storage);
+  assert.equal(state.events[0].date, '2026-10-12');
+  assert.equal(state.notes[0].body, 'Baseline overfits.');
+  assert.equal(state.theme, 'dark');
+  assert.equal(D.normalizeState({ schema: 2 }).theme, 'light');
+});
+
+test('malformed calendar and note imports are rejected instead of silently dropped', () => {
+  assert.throws(() => D.normalizeState({ schema: 2, events: {} }), /Invalid events/);
+  assert.throws(() => D.normalizeState({ schema: 2, notes: 'broken' }), /Invalid notes/);
+});
+
 test('Pages workflow only stages the static runtime assets', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '.github/workflows/pages.yml'), 'utf8');
   assert.match(workflow, /cp index\.html app\.js data\.js style\.css _site\//);

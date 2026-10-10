@@ -3,23 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f7f7f4">
+  <meta name="theme-color" content="#F7F4EC">
   <title>NeuroDev — Today</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="site-header">
-    <a class="brand" href="./" aria-label="NeuroDev Today"><span class="brand-mark">N</span> NEURODEV</a>
-    <nav id="nav" aria-label="Main navigation"></nav>
-    <div class="header-actions">
-      <button class="quiet-button" id="export-button" type="button">Export</button>
-      <label class="quiet-button import-label" for="import-file">Import</label>
-      <input id="import-file" type="file" accept="application/json,.json">
-      <button class="quiet-button" id="sync-button" type="button" title="Check for a newly published website version">Sync site</button>
+  <div class="workspace">
+    <aside class="sidebar">
+      <a class="brand" href="./" aria-label="NeuroDev Home"><span class="brand-mark">N</span><span>NEURODEV<small>PERSONAL LEARNING OS</small></span></a>
+      <p class="side-label">WORKSPACE</p>
+      <nav id="nav" aria-label="Main navigation"></nav>
+      <div class="sidebar-bottom"><span class="side-caption">Built for focused work</span></div>
+    </aside>
+    <div class="main-column">
+      <header class="topbar"><div class="mobile-brand"><span class="brand-mark">N</span><b>NEURODEV</b></div><div class="header-actions"><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch theme"><span aria-hidden="true">◐</span><span>Dark</span></button>
+        <button class="quiet-button" id="export-button" type="button">Export</button>
+        <label class="quiet-button import-label" for="import-file">Import</label>
+        <input id="import-file" type="file" accept="application/json,.json">
+        <button class="quiet-button" id="sync-button" type="button" title="Check for a newly published website version">Sync site</button>
+      </div></header>
+      <main id="app" tabindex="-1" aria-live="polite"></main>
+      <footer><span id="save-status" role="status" aria-live="polite">Saved in this browser</span><span>Static site · local data</span></footer>
     </div>
-  </header>
-  <main id="app" tabindex="-1" aria-live="polite"></main>
-  <footer><span id="save-status" role="status" aria-live="polite">Saved in this browser</span><span>Static site · local data</span></footer>
+  </div>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>

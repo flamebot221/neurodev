@@ -7,12 +7,12 @@
   const STORAGE_KEY = 'neurodev-dashboard-v2';
   const LEGACY_KEY = 'neurodev-os';
   const id = () => globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const emptyState = () => ({ schema: 2, projects: [], tasks: [], backlog: [], learning: [], subjects: [], archive: {} });
+  const emptyState = () => ({ schema: 2, projects: [], tasks: [], backlog: [], learning: [], subjects: [], events: [], notes: [], theme: 'light', archive: {} });
   function normalizeState(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The file must contain a NeuroDev data object.');
     if (value.format === 'neurodev-recovery-export') throw new Error('This is a recovery copy of raw storage, not an importable dashboard backup.');
     if (value.schema !== 2) throw new Error('This JSON is not a current dashboard backup.');
-    for (const key of ['projects', 'tasks', 'backlog', 'learning', 'subjects']) {
+    for (const key of ['projects', 'tasks', 'backlog', 'learning', 'subjects', 'events', 'notes']) {
       if (value[key] !== undefined && !Array.isArray(value[key])) throw new Error(`Invalid ${key} list in the data file.`);
     }
     const state = { ...emptyState(), ...value };
@@ -30,6 +30,9 @@
     state.backlog = state.backlog.map(x => ({ id: String(x.id || id()), title: String(x.title || ''), note: String(x.note || ''), link: String(x.link || ''), category: String(x.category || 'Other') }));
     state.learning = state.learning.map(x => ({ id: String(x.id || id()), kind: x.kind === 'paper' ? 'paper' : 'topic', title: String(x.title || ''), topic: String(x.topic || ''), status: ['queued', 'reading', 'done'].includes(x.status) ? x.status : 'queued', link: String(x.link || ''), question: String(x.question || '') }));
     state.subjects = state.subjects.map(s => ({ id: String(s.id || id()), name: String(s.name || 'Untitled subject'), examDate: String(s.examDate || ''), topics: Array.isArray(s.topics) ? s.topics.map(t => ({ id: String(t.id || id()), title: String(t.title || ''), done: Boolean(t.done), projectId: String(t.projectId || '') })) : [] }));
+    state.events = state.events.map(e => ({ id: String(e.id || id()), title: String(e.title || 'Untitled event'), date: String(e.date || ''), time: String(e.time || ''), category: String(e.category || 'Work'), note: String(e.note || '') }));
+    state.notes = state.notes.map(n => ({ id: String(n.id || id()), title: String(n.title || 'Untitled note'), body: String(n.body || ''), updatedAt: String(n.updatedAt || '') }));
+    state.theme = value.theme === 'dark' ? 'dark' : 'light';
     if (!state.archive || typeof state.archive !== 'object' || Array.isArray(state.archive)) state.archive = {};
     return state;
   }

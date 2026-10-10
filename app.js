@@ -8,6 +8,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const url = value => /^https?:\/\//i.test(String(value || '')) ? esc(value) : '';
   let page = 'today', state, storageBlocked = false, deployedVersion = '';
+  let selectedDate = today(), calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   try { state = D.loadState(localStorage); }
   catch (error) { state = D.emptyState(); storageBlocked = true; }
   const activeProject = () => state.projects.find(p => p.status === 'active');
@@ -33,26 +34,73 @@
   function blank(message) { return `<p class="empty">${esc(message)}</p>`; }
   function projectLabel(projectId) { return state.projects.find(p => p.id === projectId)?.name || ''; }
 
-  function todayPage() {
-    const project = activeProject();
+  function dateLabel(iso, opts = { weekday: 'short', month: 'short', day: 'numeric' }) {
+    if (!iso) return '';
+    return new Intl.DateTimeFormat(undefined, opts).format(new Date(`${iso}T12:00:00`));
+  }
+  function daysRemaining(iso) {
+    return Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86400000);
+  }
+  function dayWord(iso) {
+    const n = daysRemaining(iso);
+    return n < 0 ? `${Math.abs(n)}d overdue` : n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : `In ${n} days`;
+  }
+  function calendarItems() {
+    const out = state.events.map(e => ({ id: e.id, title: e.title, date: e.date, time: e.time, category: e.category, note: e.note, type: 'event' }));
+    state.subjects.filter(s => s.examDate).forEach(s => out.push({ id: `exam-${s.id}`, title: `${s.name} exam`, date: s.examDate, category: 'Academics', type: 'exam' }));
+    state.tasks.filter(t => !t.done && t.dueDate).forEach(t => out.push({ id: `task-${t.id}`, title: t.title, date: t.dueDate, category: 'Project', type: 'task', milestone: t.milestone, projectId: t.projectId }));
+    return out.filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e.date));
+  }
+  function monthCalendar(compact = false) {
+    const y = calendarMonth.getFullYear(), m = calendarMonth.getMonth();
+    const first = new Date(y, m, 1), startOffset = (first.getDay() + 6) % 7;
+    const days = new Date(y, m + 1, 0).getDate();
+    const items = calendarItems();
+    let cells = '';
+    for (let i = 0; i < startOffset; i++) cells += '<span class="calendar-empty" aria-hidden="true"></span>';
+    for (let day = 1; day <= days; day++) {
+      const iso = toISO(new Date(y, m, day));
+      const hasItems = items.some(e => e.date === iso);
+      cells += `<button type="button" class="calendar-day ${iso === today() ? 'is-today' : ''} ${iso === selectedDate ? 'is-selected' : ''} ${hasItems ? 'has-items' : ''}" data-select-date="${iso}" aria-label="${esc(dateLabel(iso, { weekday: 'long', month: 'long', day: 'numeric' }))}${hasItems ? ', has events' : ''}">${day}${hasItems ? '<i></i>' : ''}</button>`;
+    }
+    const monthName = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(calendarMonth);
+    return `<section class="calendar-widget ${compact ? 'compact' : ''}"><div class="calendar-head"><h2>${compact ? 'Calendar' : esc(monthName)}</h2><div class="calendar-controls"><button type="button" data-month="-1" aria-label="Previous month">‹</button>${compact ? `<span>${esc(monthName)}</span>` : ''}<button type="button" data-month="1" aria-label="Next month">›</button></div></div><div class="calendar-grid calendar-weekdays">${['M','T','W','T','F','S','S'].map(d => `<span>${d}</span>`).join('')}</div><div class="calendar-grid">${cells}</div>${compact ? `<div class="selected-calendar-events"><h3>${esc(dateLabel(selectedDate))}</h3>${eventList(selectedDate)}</div><button class="text-button calendar-open" type="button" data-page="calendar">Open calendar →</button>` : ''}</section>`;
+  }
+  function itemsForDate(date) { return calendarItems().filter(e => e.date === date).sort((a,b) => (a.time || '').localeCompare(b.time || '')); }
+  function eventList(date, editable = false) {
+    const items = itemsForDate(date);
+    if (!items.length) return blank('Nothing scheduled for this day.');
+    return `<ul class="event-list">${items.map(e => `<li><div class="event-time">${esc(e.time || e.category || e.type)}</div><div class="event-copy"><b>${esc(e.title)}</b>${e.note ? `<span>${esc(e.note)}</span>` : ''}${e.milestone ? `<small>${esc(e.milestone)}</small>` : ''}</div>${editable && e.type === 'event' ? `<button class="text-button" type="button" data-edit-event="${esc(e.id)}">Edit</button>` : ''}${editable && e.type === 'event' ? `<button class="text-button danger-text" type="button" data-delete-event="${esc(e.id)}">Delete</button>` : ''}</li>`).join('')}</ul>`;
+  }
+  function deadlinePanel() {
     const now = today();
-    const tasks = state.tasks.filter(t => !t.done && t.dueDate && t.dueDate <= now && (!t.projectId || t.projectId === project?.id));
-    const deadlines = state.subjects.filter(s => s.examDate && s.examDate >= now && s.examDate <= addDays(now, 21)).sort((a, b) => a.examDate.localeCompare(b.examDate));
+    const exams = state.subjects.filter(s => s.examDate && daysRemaining(s.examDate) >= 0).sort((a,b) => a.examDate.localeCompare(b.examDate)).slice(0, 4);
+    return `<section class="rail-section"><div class="rail-title"><h2>Deadlines</h2><button class="text-button" type="button" data-page="academics">All →</button></div>${exams.length ? exams.map(s => `<div class="deadline-row"><span><b>${esc(s.name)}</b><small>${dateLabel(s.examDate)}</small></span><span class="days-left">${dayWord(s.examDate)}</span></div>`).join('') : blank('No upcoming exam dates.')}</section>`;
+  }
+  function milestonesPanel(project) {
+    const upcoming = state.tasks.filter(t => !t.done && t.dueDate && t.milestone).sort((a,b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 4);
+    const fallback = project?.currentMilestone ? `<div class="milestone-row"><span class="milestone-dot"></span><span><b>${esc(project.currentMilestone)}</b><small>Current milestone</small></span></div>` : '';
+    return `<section class="rail-section"><div class="rail-title"><h2>Milestones</h2><button class="text-button" type="button" data-page="projects">Projects →</button></div>${upcoming.length ? upcoming.map(t => `<div class="milestone-row"><span class="milestone-dot"></span><span><b>${esc(t.milestone)}</b><small>${esc(t.title)} · ${dateLabel(t.dueDate)}</small></span></div>`).join('') : fallback || blank('Add dated milestone tasks to see them here.')}</section>`;
+  }
+  function todayPage() {
+    const project = activeProject(), now = today();
     const nextTask = project && state.tasks.find(t => !t.done && t.projectId === project.id && (!project.currentMilestone || t.milestone === project.currentMilestone));
-    return `${heading('Today', new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()))}
-      <section class="today-focus" aria-labelledby="focus-title"><div class="eyebrow">ACTIVE PROJECT</div>
-        ${project ? `<h2 id="focus-title">${esc(project.name)}</h2><p class="muted">${esc(project.problem || project.objective || 'Add a short problem statement in Projects.')}</p>
-          <div class="focus-line"><b>Current milestone</b><span>${esc(project.currentMilestone || 'Set the current milestone in Projects.')}</span></div>
-          <div class="focus-line"><b>Next action</b><span>${nextTask ? esc(nextTask.title) : 'Add one concrete task for this milestone.'}</span></div>
-          <button class="text-button" type="button" data-page="projects">Open project →</button>`
-          : `<h2 id="focus-title">Choose one project to work on</h2><p class="muted">Only one project can be active. Keep everything else queued.</p><button class="button" type="button" data-page="projects">Set active project</button>`}
-      </section>
-      <section class="section-block"><div class="section-head"><h2>Needs attention today</h2><button class="text-button" type="button" data-page="academics">Academics →</button></div>
-        ${tasks.length ? `<ul class="task-list">${tasks.map(t => `<li><label><input type="checkbox" data-task-done="${esc(t.id)}"><span>${esc(t.title)}</span></label><small>${t.dueDate && t.dueDate < now ? 'Overdue' : t.dueDate ? 'Due today' : 'No date'}${t.projectId ? ` · ${esc(projectLabel(t.projectId))}` : ''}</small></li>`).join('')}</ul>` : blank('No tasks due today. Add one small next action to the active project.')}
-        ${project ? `<form id="quick-task-form" class="inline-form">${field('Next concrete action', 'title', '', { placeholder: 'e.g. Train the baseline model', required: true })}${button('Add task')}</form>` : ''}
-      </section>
-      ${deadlines.length ? `<section class="section-block"><div class="section-head"><h2>Upcoming exams</h2><button class="text-button" type="button" data-page="academics">View subjects →</button></div><ul class="simple-list">${deadlines.map(s => `<li><b>${esc(s.name)}</b><span>${esc(s.examDate)}${s.examDate < now ? ' · overdue' : ''}</span></li>`).join('')}</ul></section>` : ''}
-      <section class="section-block backlog-preview"><div class="section-head"><h2>Backlog</h2><button class="text-button" type="button" data-page="backlog">${state.backlog.length} saved · Review →</button></div><p class="muted">Capture ideas here; they are not commitments until you promote one.</p></section>`;
+    const urgent = state.tasks.filter(t => !t.done && t.dueDate && t.dueDate <= now).sort((a,b) => a.dueDate.localeCompare(b.dueDate));
+    const projectTasksToday = project ? state.tasks.filter(t => !t.done && t.projectId === project.id && (!t.dueDate || t.dueDate <= now) && t.id !== nextTask?.id) : [];
+    const plan = [...(nextTask ? [nextTask] : []), ...urgent.filter(t => t.id !== nextTask?.id), ...projectTasksToday].filter((t,i,a) => a.findIndex(x => x.id === t.id) === i).slice(0, 6);
+    const dated = state.subjects.filter(s => s.examDate && daysRemaining(s.examDate) >= 0).sort((a,b) => a.examDate.localeCompare(b.examDate))[0];
+    return `<div class="home-heading"><div><p class="eyebrow">${esc(dateLabel(now, { weekday: 'long', month: 'long', day: 'numeric' }))}</p><h1>Today</h1></div><span class="focus-tag">FOCUS ON THE NEXT STEP</span></div>
+      <div class="dashboard-grid"><div class="home-main">
+        <section class="focus-card"><div class="focus-top"><div><p class="eyebrow">ACTIVE PROJECT</p>${project ? `<h2>${esc(project.name)}</h2>` : '<h2>Choose your active project</h2>'}</div><button class="text-button" type="button" data-page="projects">${project ? 'Open project ↗' : 'Set up project →'}</button></div>
+          ${project ? `<p class="focus-problem">${esc(project.problem || project.objective || 'Add the problem you are trying to solve.')}</p><div class="focus-stats"><div><small>CURRENT MILESTONE</small><b>${esc(project.currentMilestone || 'Not set yet')}</b></div><div><small>BLOCKER</small><b class="${project.blockers ? 'blocker-text' : 'muted'}">${esc(project.blockers || 'No blocker recorded')}</b></div></div><div class="next-action"><span class="action-icon">↗</span><span><small>NEXT ACTION</small><b>${esc(nextTask?.title || 'Add one concrete task for this milestone')}</b></span></div>` : '<p class="focus-problem">Keep one project active and leave other interests in the backlog.</p>'}
+        </section>
+        <section class="plan-section"><div class="section-head"><div><p class="eyebrow">YOUR WORKDAY</p><h2>Today's plan</h2></div><span class="muted">${plan.length} ${plan.length === 1 ? 'priority' : 'priorities'}</span></div>
+          ${plan.length ? `<ul class="plan-list">${plan.map((t,i) => `<li class="plan-item"><span class="plan-time">${i === 0 ? '01' : String(i + 1).padStart(2,'0')}</span><label class="plan-check"><input type="checkbox" data-task-done="${esc(t.id)}"><span class="checkmark"></span><span class="plan-copy"><b>${esc(t.title)}</b><small>${esc(t.milestone || projectLabel(t.projectId) || 'Learning task')}${t.dueDate ? ` · ${dayWord(t.dueDate)}` : ''}</small></span></label></li>`).join('')}</ul>` : `<div class="empty-plan"><span>✓</span><p>No urgent tasks today. Pick one small next action and begin.</p></div>`}
+          ${project ? `<form id="quick-task-form" class="quick-add">${field('Add a concrete action', 'title', '', { placeholder: 'e.g. Run the baseline experiment', required: true })}${button('Add task')}</form>` : ''}
+        </section>
+        ${urgent.some(t => !plan.find(p => p.id === t.id)) ? `<section class="rail-section overdue-list"><h2>Other tasks needing attention</h2>${urgent.filter(t => !plan.find(p => p.id === t.id)).slice(0,3).map(t => `<div class="deadline-row"><span><b>${esc(t.title)}</b><small>${esc(projectLabel(t.projectId) || 'Personal task')}</small></span><label class="mini-check"><input type="checkbox" data-task-done="${esc(t.id)}"><span>Done</span></label></div>`).join('')}</section>` : ''}
+        <section class="backlog-strip"><div><p class="eyebrow">LATER, NOT TODAY</p><b>Keep new interests out of your active plan.</b></div><button class="text-button" type="button" data-page="backlog">Backlog (${state.backlog.length}) →</button></section>
+      </div><aside class="right-rail">${monthCalendar(true)}${deadlinePanel()}${milestonesPanel(project)}${dated ? `<section class="next-deadline"><span class="deadline-icon">⌁</span><div><small>NEXT ACADEMIC DEADLINE</small><b>${esc(dated.name)}</b><span>${dayWord(dated.examDate)} · ${dateLabel(dated.examDate)}</span></div></section>` : ''}</aside></div>`;
   }
 
   function projectForm(p = null) {
@@ -120,10 +168,30 @@
   }
 
   function addDays(date, days) { const d = new Date(`${date}T12:00:00`); d.setDate(d.getDate() + days); return toISO(d); }
-  const views = { today: todayPage, projects: projectsPage, backlog: backlogPage, learning: learningPage, academics: academicsPage };
-  const navItems = [['today', 'Today'], ['projects', 'Projects'], ['backlog', 'Backlog'], ['learning', 'Theory & research'], ['academics', 'Academics']];
+  function calendarPage() {
+    const dayItems = itemsForDate(selectedDate);
+    const editId = new URLSearchParams(location.search).get('edit');
+    const editEvent = state.events.find(e => e.id === editId);
+    return `${heading('Calendar', 'Project work, exams, and saved events in one place.')}
+      <div class="calendar-page-grid">${monthCalendar(false)}<section class="selected-day-panel"><div class="selected-day-head"><div><p class="eyebrow">SELECTED DAY</p><h2>${esc(dateLabel(selectedDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))}</h2></div><button class="button" type="button" data-new-event>+ Add event</button></div>
+      ${eventList(selectedDate, true)}${editEvent ? eventForm(editEvent) : ''}<div class="new-event-slot" id="event-form-slot"></div></section></div>`;
+  }
+  function eventForm(event = null) {
+    const e = event || { title: '', date: selectedDate, time: '', category: 'Project', note: '' };
+    return `<form class="event-form form-grid" data-event-form="${esc(event?.id || '')}"><p class="eyebrow wide">${event ? 'EDIT EVENT' : 'NEW EVENT'}</p>${field('Title', 'title', e.title, { required: true })}${select('Type', 'category', e.category, [['Project','Project'],['Theory','Theory'],['Academics','Academics'],['Research','Research'],['Other','Other']])}${field('Date', 'date', e.date, { type: 'date', required: true })}${field('Time (optional)', 'time', e.time, { type: 'time' })}${area('Note (optional)', 'note', e.note, true)}<div class="form-actions wide"><button class="button" type="submit">${event ? 'Save event' : 'Create event'}</button>${event ? `<button class="quiet-button" type="button" data-cancel-event>Cancel</button>` : ''}</div></form>`;
+  }
+  function notesPage() {
+    return `${heading('Notes', 'Short working notes. Keep detailed documentation with your project.')}
+      <form id="note-form" class="note-compose"><label class="field"><span>Title</span><input name="title" required placeholder="What are you figuring out?"></label><label class="field"><span>Note</span><textarea name="body" rows="4" required placeholder="A key question, result, or decision…"></textarea></label><button class="button" type="submit">Save note</button></form>
+      <section class="note-list">${state.notes.slice().sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).map(n => `<article class="note-card"><div><h2>${esc(n.title)}</h2><small>${esc(n.updatedAt ? dateLabel(n.updatedAt.slice(0,10), { month:'short', day:'numeric' }) : '')}</small></div><p>${esc(n.body)}</p><button class="text-button danger-text" type="button" data-delete-note="${esc(n.id)}">Delete</button></article>`).join('') || blank('No notes yet. Save a short takeaway or decision when it helps the next work session.')}</section>`;
+  }
+  const views = { today: todayPage, projects: projectsPage, academics: academicsPage, learning: learningPage, calendar: calendarPage, backlog: backlogPage, notes: notesPage };
+  const navItems = [['today', '⌂', 'Home'], ['projects', '◫', 'Projects'], ['academics', '▤', 'Academics'], ['learning', '⌘', 'Theory & Research'], ['calendar', '▦', 'Calendar'], ['backlog', '↳', 'Backlog'], ['notes', '▧', 'Notes']];
   function render() {
-    $('#nav').innerHTML = navItems.map(([key, label]) => `<button type="button" class="nav-link ${page === key ? 'selected' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${label}</button>`).join('');
+    document.body.dataset.theme = state.theme || 'light';
+    $('meta[name="theme-color"]').content = state.theme === 'dark' ? '#0B0B0B' : '#F7F4EC';
+    const themeButton = $('#theme-toggle'); themeButton.innerHTML = `<span aria-hidden="true">${state.theme === 'dark' ? '☼' : '◐'}</span><span>${state.theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>`;
+    $('#nav').innerHTML = navItems.map(([key, icon, label]) => `<button type="button" class="nav-link ${page === key ? 'selected' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join('');
     $('#app').innerHTML = `${storageBlocked ? '<p class="notice error" role="alert">Saved data could not be read. It has not been overwritten. Export the raw recovery copy or import a valid dashboard backup to continue.</p>' : ''}${views[page]()}`;
     if (storageBlocked) $('#app').querySelectorAll('button:not([data-page]), input, textarea, select').forEach(el => { el.disabled = true; });
     bind();
@@ -131,6 +199,14 @@
   function bind() {
     document.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', () => { page = el.dataset.page; render(); $('#app').focus(); }));
     document.querySelectorAll('[data-task-done]').forEach(el => el.addEventListener('change', () => { const task = state.tasks.find(t => t.id === el.dataset.taskDone); if (task) task.done = el.checked; persist(); render(); }));
+    document.querySelectorAll('[data-select-date]').forEach(el => el.addEventListener('click', () => { selectedDate = el.dataset.selectDate; if (page !== 'calendar') page = 'today'; render(); }));
+    document.querySelectorAll('[data-month]').forEach(el => el.addEventListener('click', () => { calendarMonth.setMonth(calendarMonth.getMonth() + Number(el.dataset.month)); render(); }));
+    const themeToggle = $('#theme-toggle'); themeToggle.addEventListener('click', () => { state.theme = state.theme === 'dark' ? 'light' : 'dark'; persist('Theme saved'); render(); });
+    document.querySelectorAll('[data-new-event]').forEach(el => el.addEventListener('click', () => { const slot = $('#event-form-slot'); slot.innerHTML = eventForm(); slot.scrollIntoView({behavior:'smooth', block:'nearest'}); bindForms(slot); }));
+    document.querySelectorAll('[data-edit-event]').forEach(el => el.addEventListener('click', () => { page = 'calendar'; render(); const slot = $('#event-form-slot'); const item = state.events.find(e => e.id === el.dataset.editEvent); slot.innerHTML = eventForm(item); bindForms(slot); }));
+    document.querySelectorAll('[data-delete-event]').forEach(el => el.addEventListener('click', () => { state.events = state.events.filter(e => e.id !== el.dataset.deleteEvent); persist(); render(); }));
+    document.querySelectorAll('[data-delete-note]').forEach(el => el.addEventListener('click', () => { state.notes = state.notes.filter(n => n.id !== el.dataset.deleteNote); persist(); render(); }));
+    document.querySelectorAll('[data-cancel-event]').forEach(el => el.addEventListener('click', () => { render(); }));
     document.querySelectorAll('[data-topic-done]').forEach(el => el.addEventListener('change', () => { const [sid, tid] = el.dataset.topicDone.split(':'); const topic = state.subjects.find(s => s.id === sid)?.topics.find(t => t.id === tid); if (topic) topic.done = el.checked; persist(); render(); }));
     document.querySelectorAll('[data-edit-project]').forEach(el => el.addEventListener('click', () => { const p = state.projects.find(x => x.id === el.dataset.editProject); const slot = $(`#edit-${CSS.escape(p.id)}`); slot.innerHTML = projectForm(p); bindForms(slot); slot.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }));
     document.querySelectorAll('[data-cancel-edit]').forEach(el => el.addEventListener('click', () => { const form = el.closest('form'); form.remove(); }));
@@ -145,6 +221,13 @@
     bindForms();
   }
   function bindForms(root = document) {
+    root.querySelectorAll('[data-cancel-event]').forEach(el => el.addEventListener('click', () => render()));
+    root.querySelectorAll('[data-event-form]').forEach(form => form.addEventListener('submit', event => {
+      event.preventDefault(); const f = new FormData(form), id = form.dataset.eventForm; const old = state.events.find(e => e.id === id);
+      const next = { id: old?.id || uid(), title: f.get('title').trim(), date: f.get('date'), time: f.get('time'), category: f.get('category'), note: f.get('note').trim() };
+      if (old) Object.assign(old, next); else state.events.push(next); selectedDate = next.date; calendarMonth = new Date(`${next.date}T12:00:00`); persist('Event saved'); render();
+    }));
+    const noteForm = $('#note-form', root); if (noteForm) noteForm.addEventListener('submit', event => { event.preventDefault(); const f = new FormData(noteForm); state.notes.push({ id: uid(), title: f.get('title').trim(), body: f.get('body').trim(), updatedAt: new Date().toISOString() }); persist('Note saved'); render(); });
     root.querySelectorAll('[data-project-form]').forEach(form => form.addEventListener('submit', event => {
       event.preventDefault(); const f = new FormData(form), id = form.dataset.projectForm; const old = state.projects.find(p => p.id === id);
       const next = { id: old?.id || uid(), name: f.get('name').trim(), problem: f.get('problem').trim(), objective: f.get('objective').trim(), deliverable: f.get('deliverable').trim(), status: f.get('status'), currentMilestone: f.get('currentMilestone').trim(), milestones: f.get('milestones').split('\n').map(x => x.trim()).filter(Boolean), prerequisites: f.get('prerequisites').trim(), blockers: f.get('blockers').trim(), links: { repository: f.get('repository').trim(), dataset: f.get('dataset').trim(), documentation: f.get('documentation').trim(), other: f.get('other').trim() }, notes: f.get('notes').trim() };
